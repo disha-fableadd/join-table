@@ -191,9 +191,16 @@ function addProduct($conn)
     $name = isset($_POST['name']) ? $_POST['name'] : '';
     $price = isset($_POST['price']) ? $_POST['price'] : 0;
     $category_name = isset($_POST['category_name']) ? $_POST['category_name'] : '';
+    $colors = isset($_POST['colors']) ? $_POST['colors'] : []; 
+    $image = isset($_FILES['image']) ? $_FILES['image'] : null;
 
     if (empty($name) || $price <= 0 || empty($category_name)) {
         echo json_encode(["status" => "fail", "message" => "Invalid input data. All fields are required."]);
+        return;
+    }
+
+    if (!is_array($colors) || empty($colors)) {
+        echo json_encode(["status" => "fail", "message" => "At least one color must be selected."]);
         return;
     }
 
@@ -208,15 +215,51 @@ function addProduct($conn)
     $row = mysqli_fetch_assoc($result);
     $category_id = $row['category_id'];
 
+    $colors_str = implode(',', $colors);
+
+    $image_path = null;
+    if ($image && $image['error'] === UPLOAD_ERR_OK) {
+        $image_name = pathinfo($image['name'], PATHINFO_FILENAME);
+        $image_extension = pathinfo($image['name'], PATHINFO_EXTENSION);
+        $unique_suffix = time() . '_' . rand(1000, 9999);
+        $new_image_name = $image_name . '_' . $unique_suffix . '.' . $image_extension;
+
+        $target_dir = 'upload/';
+        $target_file = $target_dir . $new_image_name;
+
+        if (!is_writable($target_dir)) {
+            echo json_encode(["status" => "fail", "message" => "Upload folder is not writable."]);
+            return;
+        }
+
+        $allowed_types = ['image/jpeg', 'image/png', 'image/gif'];
+        if (!in_array($image['type'], $allowed_types)) {
+            echo json_encode(["status" => "fail", "message" => "Invalid image format. Allowed types: jpg, png, gif."]);
+            return;
+        }
+
+        if (move_uploaded_file($image['tmp_name'], $target_file)) {
+            $image_path = $target_file;
+        } else {
+            echo json_encode(["status" => "fail", "message" => "Failed to upload image."]);
+            return;
+        }
+    }
+
     if ($product_id > 0) {
-        $update_sql = "UPDATE products SET name = '$name', price = $price, category_id = $category_id WHERE product_id = $product_id";
+        $update_sql = "UPDATE products SET name = '$name', price = $price, category_id = $category_id, colors = '$colors_str'";
+        if ($image_path) {
+            $update_sql .= ", image = '$image_path'";
+        }
+        $update_sql .= " WHERE product_id = $product_id";
+
         if (mysqli_query($conn, $update_sql)) {
             echo json_encode(["status" => "success", "message" => "Product updated successfully."]);
         } else {
             echo json_encode(["status" => "fail", "message" => "Failed to update product: " . mysqli_error($conn)]);
         }
     } else {
-        $product_insert_sql = "INSERT INTO products (name, price, category_id) VALUES ('$name', $price, $category_id)";
+        $product_insert_sql = "INSERT INTO products (name, price, category_id, colors, image) VALUES ('$name', $price, $category_id, '$colors_str', '$image_path')";
         if (mysqli_query($conn, $product_insert_sql)) {
             $product_id = mysqli_insert_id($conn);
             echo json_encode(["status" => "success", "message" => "Product added successfully.", "product_id" => $product_id]);
@@ -225,6 +268,9 @@ function addProduct($conn)
         }
     }
 }
+
+
+
 
 // Function to show categories
 function showCategory($conn)
@@ -288,7 +334,7 @@ function displayOrder($conn)
 // Function to display products and their categories
 function showProduct($conn)
 {
-    $sql = "SELECT p.product_id, p.name AS product_name, p.price, c.category_name 
+    $sql = "SELECT p.product_id, p.name AS product_name, p.price,p.image,p.color,c.category_name 
             FROM products p 
             INNER JOIN categories c ON p.category_id = c.category_id";
     $result = mysqli_query($conn, $sql);
